@@ -1,0 +1,6 @@
+{
+  "name": "PREDICTA",
+  "description": "An intelligent data analysis platform that performs automatic cleaning, transformation, and interactive dashboard generation from CSV/Excel datasets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
