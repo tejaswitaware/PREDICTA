@@ -374,3 +374,106 @@ export function processDataset(name: string, rawData: any[]): Dataset {
     correlationMatrix: {} 
   };
 }
+
+export function calculateDataQualityScore(dataset: Dataset) {
+  const issues: { type: string; count: number; description: string; score_impact: number }[] = [];
+  let totalScore = 100;
+
+  // 1. Missing Values
+  const totalCells = dataset.rowCount * dataset.colCount;
+  const totalMissing = dataset.columns.reduce((sum, col) => sum + col.missingValues, 0);
+  const missingPercent = (totalMissing / totalCells) * 100;
+  
+  if (totalMissing > 0) {
+    const impact = Math.min(25, Math.ceil(missingPercent * 2));
+    issues.push({ 
+      type: "Missing Values", 
+      count: totalMissing, 
+      description: `${missingPercent.toFixed(1)}% of data points are empty.`,
+      score_impact: impact
+    });
+    totalScore -= impact;
+  }
+
+  // 2. Outliers
+  const outliers = dataset.columns.reduce((sum, col) => sum + (col.outliersCount || 0), 0);
+  if (outliers > 0) {
+    const impact = Math.min(15, Math.ceil((outliers / dataset.rowCount) * 20));
+    issues.push({ 
+      type: "Outliers", 
+      count: Math.round(outliers), 
+      description: "Statistical anomalies detected in numeric columns.",
+      score_impact: impact
+    });
+    totalScore -= impact;
+  }
+
+  // 3. High Cardinality in Categories
+  const extremeCategories = dataset.columns.filter(c => c.type === 'categorical' && c.uniqueValues > 50).length;
+  if (extremeCategories > 0) {
+    issues.push({ 
+      type: "High Cardinality", 
+      count: extremeCategories, 
+      description: "Some category columns have too many unique values for clean analysis.",
+      score_impact: 5
+    });
+    totalScore -= 5;
+  }
+
+  return {
+    score: Math.max(0, totalScore),
+    issues: issues.sort((a, b) => b.score_impact - a.score_impact)
+  };
+}
+
+export function generateForecast(dataset: Dataset, xAxis: string, yAxis: string, periods: number) {
+  const data = dataset.data.filter(d => d[xAxis] !== null && d[yAxis] !== null);
+  if (data.length < 5) return [];
+
+  // Sort by xAxis to ensure time series
+  const sorted = _.sortBy(data, xAxis);
+  
+  // Extract numeric Y values
+  const yValues = sorted.map(d => Number(d[yAxis])).filter(v => !isNaN(v));
+  if (yValues.length < 5) return [];
+
+  // Simple Linear Regression: y = mx + c
+  const n = yValues.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += yValues[i];
+    sumXY += i * yValues[i];
+    sumXX += i * i;
+  }
+  
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+
+  // Generate forecast
+  const lastX = sorted[sorted.length - 1][xAxis];
+  const results = [];
+  
+  // Use last 5 real points for continuity in chart
+  const startIdx = Math.max(0, sorted.length - 5);
+  for (let i = startIdx; i < sorted.length; i++) {
+    results.push({
+      [xAxis]: String(sorted[i][xAxis]),
+      [yAxis]: Number(sorted[i][yAxis]),
+      isForecast: false
+    });
+  }
+
+  // Linear growth/decline
+  for (let i = 1; i <= periods; i++) {
+    const nextVal = slope * (n + i - 1) + intercept;
+    results.push({
+      [xAxis]: `F+${i}`,
+      [yAxis]: Math.round(nextVal * 100) / 100,
+      isForecast: true
+    });
+  }
+
+  return results;
+}
